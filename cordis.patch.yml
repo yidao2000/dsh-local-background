@@ -1,0 +1,17 @@
+# dsh-local-background —— 插入 loader 条目并下发默认配置
+#
+# 这里只放**所有人通用**的默认值，不要写作者本机的路径。
+# dir 留空 = 新装的人还没选过文件夹，装好后到「插件 → dsh-local-background → 配置」里选一个；
+# 选完会写进用户态目录的 settings.json（不在包里），并立刻生效、不需要重启。
+- insert:
+    - id: dsh-local-background
+      name: dsh-local-background
+      config:
+        # 壁纸文件夹。留空 = 由用户在插件界面里选（选完存进 settings.json）
+        dir: ''
+        # 每几分钟换一张；0 = 不轮换
+        rotateMinutes: 5
+        # 背景图压暗遮罩 0~1（图太亮就加大；越小越亮）
+        dim: 0.25
+        # 主面板不透明度 0~1（越小背景越明显，文字越难读）
+        surface: 0.72

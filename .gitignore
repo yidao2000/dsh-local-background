@@ -1,0 +1,14 @@
+# 运行时状态：写进用户态目录（~/.dsh/dsh-local-background/），不进仓库
+settings.json
+report.log
+
+# 开发期的一次性脚本 / 备份产物（只留在备份目录里）
+*.bak
+*.bak-*
+client.js.gradientbak
+
+# 依赖与编辑器
+node_modules/
+.DS_Store
+.idea/
+*.iml

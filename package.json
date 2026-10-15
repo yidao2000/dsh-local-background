@@ -1,0 +1,52 @@
+{
+  "name": "dsh-local-background",
+  "version": "1.1.0",
+  "description": "本地背景图 / Local wallpaper for DSH：从你自己的文件夹里随机取一张当聊天背景；界面里选目录、调透明度，改完立刻见效，不依赖任何第三方皮肤",
+  "license": "MIT",
+  "author": "yidao2000 <yi_dao2000@qq.com>",
+  "type": "module",
+  "main": "index.js",
+  "homepage": "https://github.com/yidao2000/dsh-local-background#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yidao2000/dsh-local-background.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yidao2000/dsh-local-background/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "background",
+    "wallpaper",
+    "theme",
+    "背景图",
+    "壁纸",
+    "皮肤"
+  ],
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "set-image.ps1",
+    "read-probe.ps1"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [],
+      "immediately": true
+    }
+  }
+}
