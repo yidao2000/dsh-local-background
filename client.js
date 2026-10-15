@@ -5,12 +5,11 @@
  *   GET  /dsh-local-background/list     → { dir, rotateMinutes, dim, surface, imageOpacity, files:[...] }
  *   GET  /dsh-local-background/img/<名> → 图片字节流
  *   GET  /dsh-local-background/pick     → 弹系统「选择文件夹」对话框
- *   GET  /dsh-local-background/dirs     → 列子目录（系统对话框不可用时的后备）
  *   POST /dsh-local-background/config   → 改配置，立即生效
- *   GET  /dsh-local-background/report   → 诊断上报（宿主写进插件目录的 report.log）
+ *   GET  /dsh-local-background/report   → 诊断上报（宿主写进用户目录的 report.log）
  *
- * CONFIG 区块里的是**兜底默认值**；服务器值（cordis.patch.yml + 插件目录的 settings.json）优先。
- * 清单取不到时用 IMAGE（默认渐变）兜底，界面不会空。
+ * CONFIG 区块里的是**兜底默认值**；服务器值（cordis.patch.yml + 用户目录的 settings.json）优先。
+ * 目录里没有可用图片时 IMAGE 为空 = 插件一句背景样式都不注入，界面就是客户端自己的默认配色。
  *
  * 设置界面挂在「插件 → dsh-local-background → 配置」这一行的配置页上
  * （ui-plugin-manager 声明的 `plugins.row.config` 槽位，key = `<包名>#<行 id>`）。
@@ -21,12 +20,14 @@
 
 (function () {
   /* ======================== CONFIG-BEGIN ======================== */
-  // 兜底图：只在取不到图片清单时使用（渐变 / https 地址 / url("data:...") 都行）
-  var IMAGE = 'linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%)';
+  // 兜底图：目录里没有图片 / 清单取不到时使用。
+  // 留空 = **不画兜底渐变**，直接露出桌面客户端自己的默认底色（最干净，也不会串色）；
+  // 想要一张固定的兜底图就填渐变或地址，例如 'linear-gradient(135deg,#0f2027,#2c5364)'。
+  var IMAGE = '';
   // DIM = 背景图上的压暗遮罩，0 = 不压暗，1 = 全黑
-  var DIM = 0.45;
+  var DIM = 0.25;
   // SURFACE = 主面板不透明度，1 = 完全不透明（看不到背景），0 = 全透明（文字可能看不清）
-  var SURFACE = 0.72;
+  var SURFACE = 0.15;
   // IMAGE_OPACITY = 背景图自身的透明度，1 = 原图，0 = 完全看不见背景图
   var IMAGE_OPACITY = 1;
   // ROTATE_MINUTES = 每隔几分钟换一张；0 = 不轮换（只显示第一张）
@@ -46,8 +47,7 @@
   var REPORT_URL = BASE_URL + '/report';
   var CONFIG_URL = BASE_URL + '/config';
   var PICK_URL = BASE_URL + '/pick';
-  var DIRS_URL = BASE_URL + '/dirs';
-  var CLIENT_VERSION = 6;
+  var CLIENT_VERSION = 7;
   /** 设置页在「插件」页上的槽位 key：`<包名>#<cordis.patch.yml 里该行的 id>`。 */
   var ROW_KEY = 'dsh-local-background#dsh-local-background';
   /** 打在「本插件自己的配置页所在浮层」上的标记：带它的浮层继续透壁纸，其余浮层用默认不透明底色。 */
@@ -136,7 +136,10 @@
    * 裸地址（/path/x.jpg、data:...、https:...）直接写进 background-image 都是非法值，
    * 会让整条声明作废（计算值变成 none）—— 这是踩过两次的坑。 */
   function cssImage(value) {
-    var v = String(value).trim();
+    // 空值 = 「没有图可画」：此时**不要**输出 background-image，让桌面客户端自己的默认底色露出来
+    // （输出 none 也能做到，但会连带清掉宿主在 html/body 上原有的背景层）。
+    var v = String(value == null ? '' : value).trim();
+    if (!v) { return null; }
     if (/^(url\(|none$|linear-gradient|radial-gradient|conic-gradient|repeating-linear-gradient|repeating-radial-gradient|repeating-conic-gradient|image-set)/i.test(v)) { return v; }
     return 'url("' + v + '")';
   }
@@ -225,6 +228,11 @@
   }
 
   function buildCss(imageValue) {
+    var image = cssImage(imageValue);
+    // 没有图可画（目录为空 / 清单取不到 / IMAGE 留空）：返回空串 = 一支样式都不注入 ——
+    // body 上的 --dsw-alias-bg-* 不再被改动，桌面客户端回到它自己的默认配色，
+    // 不会留一个跟主题不搭的渐变。「弹窗恢复默认底色」那段此时也用不上，一并省掉。
+    if (!image) { return ''; }
     var pct = Math.round(clamp01(state.surface, SURFACE) * 100) + '%';
     var veil = Math.round((1 - clamp01(state.imageOpacity, IMAGE_OPACITY)) * 100) + '%';
     var dim = clamp01(state.dim, DIM);
@@ -235,7 +243,7 @@
       '  --dslb-veil: color-mix(in srgb, var(--dsw-static-neutral-bluish-00) ' + veil + ', transparent);',
       '  background-image: linear-gradient(rgba(0,0,0,' + dim + '), rgba(0,0,0,' + dim + ')),',
       '    linear-gradient(var(--dslb-veil), var(--dslb-veil)),',
-      '    ' + cssImage(imageValue) + ' !important;',
+      '    ' + image + ' !important;',
       '  background-position: center center, center center, center center !important;',
       '  background-size: cover, cover, cover !important;',
       '  background-repeat: no-repeat, no-repeat, no-repeat !important;',
@@ -272,12 +280,16 @@
     if (typeof document === 'undefined') { return false; }
     try {
       unmount();
+      var css = buildCss(imageValue);
+      // 空值 = 没有图可画：不注入样式（而不是注入一条空的 background-image），
+      // 让桌面客户端自己的默认配色原样露出来。
+      if (!css) { return false; }
       var style = document.createElement('style');
       style.id = STYLE_ID;
-      style.textContent = buildCss(imageValue);
+      style.textContent = css;
       (document.head || document.documentElement).appendChild(style);
       state.mounts += 1;
-      var iv = String(imageValue);
+      var iv = String(imageValue == null ? '' : imageValue);
       report('mount', iv.slice(0, 90) + ' | imgOp=' + state.imageOpacity);
       if (iv.charAt(0) === '/' || /^https?:/i.test(iv)) { preflight(iv); }
       return true;
@@ -369,8 +381,9 @@
         state.files = state.fileList.length;
         report('list-ok', state.files + ' files; rotate=' + state.rotateMinutes + '; dir=' + state.dir);
         if (state.files === 0) {
+          // 目录里没图：收掉之前可能挂过的壁纸样式，交还给客户端默认配色
           state.currentImage = null;
-          mount(IMAGE);
+          unmount();
           probe('fallback', { reason: state.serverError || '目录里没有图片' });
           notify();
           return;
@@ -386,7 +399,7 @@
           setTimeout(function () { loadList(attempt + 1); }, 400 * Math.pow(2, attempt));
           return;
         }
-        mount(IMAGE);
+        unmount();
         report('list-fail', 'attempts=' + (attempt + 1) + '; ' + message);
         probe('list-error', { attempts: attempt + 1, message: message });
         notify();
@@ -603,9 +616,6 @@
       var statusPair = React_.useState('');
       var status = statusPair[0];
       var setStatus = statusPair[1];
-      var browsePair = React_.useState(null);
-      var browse = browsePair[0];
-      var setBrowse = browsePair[1];
       var savingPair = React_.useState(false);
       var saving = savingPair[0];
       var setSaving = savingPair[1];
@@ -678,7 +688,7 @@
         return React_.createElement('p', { style: hintStyle }, '正在读取当前设置…');
       }
 
-      /** 选择文件夹：优先系统对话框，不行就退到内置浏览器。 */
+      /** 选择文件夹：弹系统的文件夹对话框（远程 / 无显示环境时宿主会直接说不支持）。 */
       var chooseFolder = function () {
         setStatus('正在打开选择窗口…');
         fetch(PICK_URL, { cache: 'no-store' })
@@ -690,8 +700,7 @@
               return;
             }
             if (data && data.supported === false) {
-              setStatus('这台机器没有系统文件夹对话框，改用下面的浏览方式。');
-              openBrowse(state.dir || '', null);
+              setStatus('这台机器上没有可用的系统文件夹对话框（远程 / 无显示环境），请在上面的输入框里直接填绝对路径。');
               return;
             }
             if (data && data.cancelled) { setStatus('已取消。'); return; }
@@ -700,27 +709,9 @@
           .catch(function (error) { setStatus('打开失败：' + String(error && error.message ? error.message : error)); });
       };
 
-      /** 目录浏览：路径拼接交给宿主（用它的平台分隔符），前端只传 base + 子目录名。 */
-      var openBrowse = function (base, child) {
-        var query = '?path=' + encodeURIComponent(base || '');
-        if (child) { query += '&child=' + encodeURIComponent(child); }
-        fetch(DIRS_URL + query, { cache: 'no-store' })
-          .then(function (res) { return res.json(); })
-          .then(function (data) {
-            setBrowse({
-              path: (data && data.path) || base || '',
-              parent: (data && data.parent) || null,
-              dirs: (data && Array.isArray(data.dirs)) ? data.dirs : [],
-              separator: (data && data.separator) || '\\',
-              error: (data && data.error) || '',
-            });
-          })
-          .catch(function (error) { setStatus('读取目录失败：' + String(error && error.message ? error.message : error)); });
-      };
-
       var children = [];
       children.push(React_.createElement('p', { key: 'lead', style: hintStyle },
-        '改动会立刻生效，并写进插件目录的 settings.json（不用重启）。'));
+        '改动会立刻生效，并写进用户目录的 settings.json（不用重启）。'));
 
       // —— 壁纸文件夹 ——
       children.push(React_.createElement('div', { key: 'dir', style: sectionStyle },
@@ -729,7 +720,7 @@
           React_.createElement('input', {
             type: 'text', style: inputStyle, spellCheck: false,
             value: snapshot.dir || '',
-            placeholder: '例如 E:\\图片\\壁纸',
+            placeholder: '例如 C:\\Users\\你的用户名\\Pictures',
             onChange: function (event) { state.dir = event.target.value; sync(); },
             onBlur: function (event) {
               var next = event.target.value.trim();
@@ -742,50 +733,8 @@
           }, '选择文件夹…'),
           React_.createElement('button', {
             type: 'button', style: buttonStyle,
-            onClick: function () { setBrowse(null); openBrowse(snapshot.dir || '', null); },
-          }, '手动浏览'),
-          React_.createElement('button', {
-            type: 'button', style: buttonStyle,
             onClick: function () { loadList(); setStatus('已重新读取。'); },
           }, '重新读取'))));
-
-      // —— 内置目录浏览器（只在展开时出现）——
-      if (browse) {
-        var dirButtons = browse.dirs.slice(0, 200).map(function (name) {
-          return React_.createElement('button', {
-            key: name, type: 'button',
-            style: { ...buttonStyle, margin: '0 6px 6px 0' },
-            onClick: function () { openBrowse(browse.path, name); },
-          }, name);
-        });
-        children.push(React_.createElement('div', {
-          key: 'browse',
-          style: {
-            marginTop: '6px', padding: '10px',
-            border: '1px solid ' + TOKENS.border, borderRadius: '8px',
-          },
-        },
-        React_.createElement('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
-          React_.createElement('code', { style: { fontSize: '12px', color: TOKENS.text, wordBreak: 'break-all' } }, browse.path || ''),
-          React_.createElement('button', {
-            type: 'button', style: buttonStyle, disabled: !browse.parent,
-            onClick: function () { if (browse.parent) { openBrowse(browse.parent, null); } },
-          }, '↑ 上一级'),
-          React_.createElement('button', {
-            type: 'button', style: buttonStyle,
-            onClick: function () {
-              var chosen = browse.path;
-              setBrowse(null);
-              change({ dir: chosen }, function () { state.dir = chosen; }).then(loadList);
-            },
-          }, '用这个文件夹'),
-          React_.createElement('button', {
-            type: 'button', style: buttonStyle, onClick: function () { setBrowse(null); },
-          }, '收起')),
-        browse.error ? React_.createElement('p', { style: hintStyle }, browse.error) : null,
-        React_.createElement('div', { style: { marginTop: '8px', maxHeight: '220px', overflow: 'auto' } },
-          dirButtons.length ? dirButtons : React_.createElement('span', { style: hintStyle }, '（没有子文件夹）'))));
-      }
 
       // —— 背景图 ——
       children.push(React_.createElement('div', { key: 'bg', style: sectionStyle },
@@ -906,8 +855,9 @@
   // ---------- 启动 ----------
   report('boot', 'client v' + CLIENT_VERSION + '; origin=' + String(location && location.origin));
 
-  // ① 先用兜底图顶上，避免取清单期间界面没有背景
-  mount(IMAGE);
+  // ① 先挂一次：目录里已经有图就把图顶上；还没有（或还没取到清单）就什么也不改，
+  //    界面保持桌面客户端自己的默认配色，不会闪一下渐变。
+  mount(currentImageValue());
   probe('boot');
 
   // ② 注册 factory（DSH 客户端模块约定）

@@ -18,14 +18,13 @@ DSH **内置没有**背景图设置：`@deepseek-ai/dsh-client-ui-theme` 只提�
 
 | 半侧 | 文件 | 职责 |
 | --- | --- | --- |
-| 宿主（Node/ESM） | `index.js` | 读图片文件夹；`webServer` 六条路由；**配置的读写与持久化** |
+| 宿主（Node/ESM） | `index.js` | 读图片文件夹；`webServer` 五条路由；**配置的读写与持久化** |
 | 客户端（浏览器） | `client.js` | 取清单 → 定时切换 `background-image` → 注入 CSS；**「插件」页里的设置界面** |
 
 ```
 GET  /dsh-local-background/list                      → { dir, rotateMinutes, dim, surface, imageOpacity, settingsOpaque, picker, files:[...] }
 GET  /dsh-local-background/img/<名>                  → 图片字节流（同源，不走 file://，不受跨域限制）
 GET  /dsh-local-background/pick                      → 弹系统文件夹对话框，返回 { supported, path }
-GET  /dsh-local-background/dirs?path=&child=         → 逐级列子目录（宿主拼路径，用平台分隔符）
 POST /dsh-local-background/config                    → 写配置：{ dir?, dim?, surface?, imageOpacity?, rotateMinutes?, settingsOpaque? }
 GET  /dsh-local-background/report                    → 客户端诊断日志（追加 report.log）
 ```
@@ -79,14 +78,18 @@ C:\Users\Administrator\.dsh\local-plugins\dsh-local-background
 
 | 控件 | 作用 | 范围 |
 | --- | --- | --- |
-| **壁纸文件夹** | 图片从哪个文件夹读 | 绝对路径 |
-| ├ `选择文件夹…` | 弹 **Windows 系统文件夹对话框** | 原生 |
-| └ `手动浏览` | 系统对话框不可用时的后备，应用内逐级进目录 | — |
-| **背景图不透明度** | 背景图自身多透明（**这是最常用的那个**） | 0% = 看不见图，100% = 原图 |
-| **背景压暗** | 在图上盖一层黑，图太亮时压一压 | 0% = 不压暗 |
-| **面板不透明度** | 界面面板多透明；越小背景越明显、字越难读 | 0~100% |
-| **自动轮换** | 每隔几分钟换一张 | 0 = 不轮换，最大 1440 |
+| **壁纸文件夹** | 图片从哪个文件夹读 | 绝对路径，默认 `C:\Users\<用户名>\Pictures` |
+| └ `选择文件夹…` | 弹 **Windows 系统文件夹对话框** | 原生 |
+| **背景图不透明度** | 背景图自身多透明（**这是最常用的那个**） | 0% = 看不见图，100% = 原图（默认） |
+| **背景压暗** | 在图上盖一层黑，图太亮时压一压 | 0% = 不压暗（默认 25%） |
+| **面板不透明度** | 界面面板多透明；越小背景越明显、字越难读 | 0~100%（默认 15%） |
+| **自动轮换** | 每隔几分钟换一张 | 0 = 不轮换，最大 1440（默认 5） |
 | **弹窗用默认（不透明）背景** | 宿主「设置」等弹窗/对话框/菜单的背景：勾上就用宿主默认不透明底色（字更清楚） | 默认勾选 |
+
+> 开箱默认值：**图片库** + 不透明度 100% + 压暗 25% + 面板 15% + 5 分钟轮换 + 弹窗不透明。
+> 「壁纸文件夹」默认由宿主在运行时算：Windows/macOS 取 `<用户目录>/Pictures`、
+> Linux 取 `$XDG_PICTURES_DIR`（缺省 `<用户目录>/Pictures`）；目录不存在就留空，界面会提示选一个。
+> 系统文件夹对话框不可用（远程 / 无显示环境）时，直接在输入框里填绝对路径即可。
 
 > 壁纸是靠改 `body` 上的 `--dsw-alias-bg-*` 透出来的，而这些自定义属性会被**弹窗、对话框、菜单**
 > 这些浮层继承 —— 于是宿主自己的「设置」弹窗（背景是 `var(--dsw-alias-bg-layer-2)`）也跟着半透明，
@@ -110,10 +113,10 @@ C:\Users\Administrator\.dsh\local-plugins\dsh-local-background
     - id: dsh-local-background
       name: dsh-local-background
       config:
-        dir: 'D:\wallpapers'   # 壁纸文件夹（可留空，装好后在插件界面里选）
+        dir: ''                # 壁纸文件夹；留空 = 用内置默认（当前用户的「图片」库）
         rotateMinutes: 5       # 每几分钟换一张；0 = 不轮换
-        dim: 0.45              # 背景压暗 0~1（图亮就加大）
-        surface: 0.72          # 面板不透明度 0~1
+        dim: 0.25              # 背景压暗 0~1（图亮就加大）
+        surface: 0.15          # 面板不透明度 0~1
         imageOpacity: 1        # 背景图不透明度 0~1
         settingsOpaque: true   # 弹窗（含宿主「设置」）用默认（不透明）背景
 ```
@@ -129,6 +132,18 @@ C:\Users\Administrator\.dsh\local-plugins\dsh-local-background
 - 支持 `.jpg .jpeg .png .webp .gif .avif .bmp`
 - 顺序按文件名排序（中文按拼音），启动时随机洗牌，一轮内不重复
 - 40 MB 的 4K 原图也没关系：浏览器自己缩放，`background-size: cover` 负责裁切
+
+### 目录里没图 / 清单取不到时：交还给客户端自己的底色
+
+`client.js` 的 `IMAGE` 默认为**空串** = 不画任何兜底渐变。没有图可画时插件**一句背景样式都不注入**，
+`body` 上的 `--dsw-alias-bg-*` 也就不再被覆盖 —— 界面就是桌面客户端原本的配色（明/暗主题都跟着走），
+不会留一个跟主题不搭的渐变。把图片丢进文件夹后点 `重新读取`，壁纸立刻接管。
+
+想要固定的兜底图，就把 CONFIG 里的 `IMAGE` 填成渐变或地址：
+
+```js
+var IMAGE = 'linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%)';
+```
 
 ### 单图模式（可选，一般用不上）
 
@@ -212,7 +227,7 @@ powershell -ExecutionPolicy Bypass -File .\read-probe.ps1
 | `package.json` | 插件清单：`dsh.bundle.patch` + `dsh.client.platform=web` + 导出 `./client` |
 | `cordis.patch.yml` | 插入 loader 条目 + **配置项的默认值** |
 | `settings.json` | **界面里改过的值**（自动生成，优先级高于 `cordis.patch.yml`；删掉即回默认） |
-| `index.js` | 宿主半侧：`webServer` 六条路由（清单 / 图片 / 选文件夹 / 浏览目录 / 写配置 / 诊断上报） |
+| `index.js` | 宿主半侧：`webServer` 五条路由（清单 / 图片 / 选文件夹 / 写配置 / 诊断上报） |
 | `client.js` | 客户端半侧：取清单、轮播、注入 CSS、**插件页里的设置界面** |
 | `settings.json` | **界面里改过的值**（自动生成，存在用户态目录，不在包里） |
 | `set-image.ps1` | 可选：把单张图嵌成 `client.js` 的兜底图 |

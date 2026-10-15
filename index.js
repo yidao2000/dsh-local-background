@@ -8,7 +8,6 @@
  *   GET  /dsh-local-background/list             → { dir, rotateMinutes, dim, surface, imageOpacity, files:[...] }
  *   GET  /dsh-local-background/img/<文件名>      → 图片字节流（Content-Type 按扩展名）
  *   GET  /dsh-local-background/pick             → 打开系统「选择文件夹」对话框，返回 { path }
- *   GET  /dsh-local-background/dirs?path=<绝对路径> → { path, parent, dirs:[子目录名] }（内置浏览器的后备）
  *   POST /dsh-local-background/config           → 写入 { dir?, dim?, surface?, imageOpacity?, rotateMinutes?, settingsOpaque? }，立即生效并落盘
  *   GET  /dsh-local-background/report           → 客户端诊断上报（写进用户态目录的 report.log）
  *
@@ -21,10 +20,10 @@
  *       只放行图片扩展名。DSH 的 webServer 仅监听回环地址。
  */
 
-import { createReadStream, readFileSync } from 'node:fs';
+import { createReadStream, readFileSync, statSync } from 'node:fs';
 import { appendFile, mkdir, readdir, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
+import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** 插件名（与 package.json name、cordis.patch.yml 的 id 一致）。 */
@@ -64,7 +63,6 @@ const IMG_PREFIX = '/dsh-local-background/img';
 const REPORT_PATH = '/dsh-local-background/report';
 const CONFIG_PATH = '/dsh-local-background/config';
 const PICK_PATH = '/dsh-local-background/pick';
-const DIRS_PATH = '/dsh-local-background/dirs';
 
 /** 插件界面里改过的值：写在用户态目录，升级插件不会被清掉，也不会随发布包外泄。 */
 const SETTINGS_FILE = join(DATA_HOME, 'settings.json');
@@ -74,8 +72,36 @@ const REPORT_LOG = join(DATA_HOME, 'report.log');
 /** 老版本把这两个文件放在 PLUGIN_DIR 里，读的时候兜底回去一层，保证升级不掉配置。 */
 const LEGACY_SETTINGS_FILE = join(PLUGIN_DIR, 'settings.json');
 
+/**
+ * 默认壁纸文件夹：当前用户的「图片」库。
+ *
+ * cordis.patch.yml 是静态 yaml，不能求值，也不该写死任何人的本机路径，
+ * 所以默认目录由宿主侧在运行时按平台算出来：
+ *   Windows / macOS → <用户目录>/Pictures（即 C:\Users\<用户名>\Pictures）
+ *   Linux           → $XDG_PICTURES_DIR，缺省 <用户目录>/Pictures
+ * 目录不存在就退回空串（设置页会提示「还没有选择壁纸文件夹」），不会拿一个坏路径去读。
+ * @returns {string} 绝对路径，或 ''
+ */
+function defaultDir() {
+  const home = homedir();
+  const candidates = [process.env.XDG_PICTURES_DIR, join(home, 'Pictures')].filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      if (statSync(candidate).isDirectory()) return candidate;
+    } catch { /* 不存在就试下一个 */ }
+  }
+  return '';
+}
+
 /** 兜底默认值（与 client.js 的 CONFIG 区块保持一致）。 */
-const DEFAULTS = { rotateMinutes: 5, dim: 0.45, surface: 0.72, imageOpacity: 1, settingsOpaque: true };
+const DEFAULTS = {
+  dir: defaultDir(),
+  rotateMinutes: 5,
+  dim: 0.25,
+  surface: 0.15,
+  imageOpacity: 1,
+  settingsOpaque: true,
+};
 
 function clampBool(value, fallback) {
   return typeof value === 'boolean' ? value : fallback;
@@ -197,7 +223,7 @@ function pickerCapability(ctx) {
 export function apply(ctx, config) {
   // —— 生效配置：profile config 打底，settings.json（插件界面里改过的）覆盖 ——
   const live = {
-    dir: typeof config?.dir === 'string' ? config.dir : '',
+    dir: typeof config?.dir === 'string' && config.dir ? config.dir : DEFAULTS.dir,
     rotateMinutes: clampMinutes(config?.rotateMinutes, DEFAULTS.rotateMinutes),
     dim: clamp01(config?.dim, DEFAULTS.dim),
     surface: clamp01(config?.surface, DEFAULTS.surface),
@@ -343,69 +369,7 @@ export function apply(ctx, config) {
     },
   });
 
-  // ④ 目录浏览（系统对话框不可用时的后备；只列子目录，不读文件内容）
-  register({
-    kind: 'exact',
-    path: DIRS_PATH,
-    handler: async (request, response) => {
-      if (request.method !== 'GET') {
-        response.writeHead(405, { allow: 'GET' });
-        response.end();
-        return;
-      }
-      const url = new URL(request.url ?? '/', 'http://localhost');
-      // 前端不拼路径：给它一个 base + child，由宿主用平台分隔符连接
-      const child = url.searchParams.get('child') || '';
-      const base = url.searchParams.get('path') || live.dir || '';
-      let requested = base;
-      if (child && base) {
-        const leaf = basename(child.replaceAll('\\', '/'));
-        if (!leaf || leaf === '.' || leaf === '..') {
-          sendJson(response, 200, { path: base, parent: null, dirs: [], error: '非法的子目录名' });
-          return;
-        }
-        requested = join(base, leaf);
-      }
-      if (!requested) { requested = homedir(); }
-      const context = { separator: sep, home: homedir() };
-      if (!isAbsolute(requested)) {
-        sendJson(response, 200, {
-          ...context,
-          path: requested,
-          parent: null,
-          dirs: [],
-          error: '需要一个绝对路径',
-        });
-        return;
-      }
-      const target = resolve(requested);
-      try {
-        const entries = await readdir(target, { withFileTypes: true });
-        const dirs = entries
-          .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
-          .map((entry) => entry.name)
-          .sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
-        const parent = dirname(target);
-        sendJson(response, 200, {
-          ...context,
-          path: target,
-          parent: parent === target ? null : parent,
-          dirs,
-        });
-      } catch (error) {
-        const parent = dirname(target);
-        sendJson(response, 200, {
-          ...context,
-          path: target,
-          parent: parent === target ? null : parent,
-          dirs: [],
-          error: `读取目录失败：${error instanceof Error ? error.message : String(error)}`,
-        });
-      }
-    },
-  });
-
-  // ⑤ 写入配置：立即生效（内存）+ 落盘（settings.json），改完不用重启
+  // ④ 写入配置：立即生效（内存）+ 落盘（settings.json），改完不用重启
   register({
     kind: 'exact',
     path: CONFIG_PATH,
@@ -472,7 +436,7 @@ export function apply(ctx, config) {
     },
   });
 
-  // ⑥ 客户端上报：把 query 原样追加到 report.log（诊断用，只写本地文件）
+  // ⑤ 客户端上报：把 query 原样追加到 report.log（诊断用，只写本地文件）
   register({
     kind: 'exact',
     path: REPORT_PATH,

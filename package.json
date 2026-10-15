@@ -1,6 +1,6 @@
 {
   "name": "dsh-local-background",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "本地背景图 / Local wallpaper for DSH：从你自己的文件夹里随机取一张当聊天背景；界面里选目录、调透明度，改完立刻见效，不依赖任何第三方皮肤",
   "license": "MIT",
   "author": "yidao2000 <yi_dao2000@qq.com>",

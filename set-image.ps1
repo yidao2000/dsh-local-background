@@ -178,5 +178,5 @@ if ($outMb -gt 8) {
     Write-Host ""
 }
 Write-Host "  下一步：刷新 DSH 页面（或重启桌面应用）即可看到新背景。" -ForegroundColor Cyan
-Write-Host "  恢复默认渐变：把 client.js 里 var IMAGE 那行换回 linear-gradient(...) 即可。" -ForegroundColor DarkGray
+Write-Host "  恢复默认（不画兜底图、用客户端自己的底色）：把 var IMAGE 那行改回 var IMAGE = '';" -ForegroundColor DarkGray
 Write-Host ""
