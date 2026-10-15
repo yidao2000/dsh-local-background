@@ -9,11 +9,11 @@
  *   GET  /dsh-local-background/img/<文件名>      → 图片字节流（Content-Type 按扩展名）
  *   GET  /dsh-local-background/pick             → 打开系统「选择文件夹」对话框，返回 { path }
  *   GET  /dsh-local-background/dirs?path=<绝对路径> → { path, parent, dirs:[子目录名] }（内置浏览器的后备）
- *   POST /dsh-local-background/config           → 写入 { dir?, dim?, surface?, imageOpacity?, rotateMinutes? }，立即生效并落盘
+ *   POST /dsh-local-background/config           → 写入 { dir?, dim?, surface?, imageOpacity?, rotateMinutes?, settingsOpaque? }，立即生效并落盘
  *   GET  /dsh-local-background/report           → 客户端诊断上报（写进用户态目录的 report.log）
  *
  * 配置来源（后者覆盖前者）：
- *   ① profile 的 cordis.patch.yml 里该条目的 config（dir / rotateMinutes / dim / surface / imageOpacity）
+ *   ① profile 的 cordis.patch.yml 里该条目的 config（dir / rotateMinutes / dim / surface / imageOpacity / settingsOpaque）
  *   ② 用户态目录里的 settings.json —— 插件界面里改的值写在这里，**改完立刻生效，不需要重启**
  *      （老版本写在插件目录里，那份仍在就会一并读回来兜底）
  *
@@ -75,7 +75,11 @@ const REPORT_LOG = join(DATA_HOME, 'report.log');
 const LEGACY_SETTINGS_FILE = join(PLUGIN_DIR, 'settings.json');
 
 /** 兜底默认值（与 client.js 的 CONFIG 区块保持一致）。 */
-const DEFAULTS = { rotateMinutes: 5, dim: 0.45, surface: 0.72, imageOpacity: 1 };
+const DEFAULTS = { rotateMinutes: 5, dim: 0.45, surface: 0.72, imageOpacity: 1, settingsOpaque: true };
+
+function clampBool(value, fallback) {
+  return typeof value === 'boolean' ? value : fallback;
+}
 
 function clamp01(value, fallback) {
   const n = Number(value);
@@ -198,6 +202,7 @@ export function apply(ctx, config) {
     dim: clamp01(config?.dim, DEFAULTS.dim),
     surface: clamp01(config?.surface, DEFAULTS.surface),
     imageOpacity: clamp01(config?.imageOpacity, DEFAULTS.imageOpacity),
+    settingsOpaque: clampBool(config?.settingsOpaque, DEFAULTS.settingsOpaque),
   };
   const saved = readSettings();
   if (typeof saved.dir === 'string') live.dir = saved.dir;
@@ -205,6 +210,7 @@ export function apply(ctx, config) {
   live.dim = clamp01(saved.dim, live.dim);
   live.surface = clamp01(saved.surface, live.surface);
   live.imageOpacity = clamp01(saved.imageOpacity, live.imageOpacity);
+  live.settingsOpaque = clampBool(saved.settingsOpaque, live.settingsOpaque);
 
   const webServer = ctx?.webServer;
   if (!webServer || typeof webServer.register !== 'function') {
@@ -225,6 +231,7 @@ export function apply(ctx, config) {
     dim: live.dim,
     surface: live.surface,
     imageOpacity: live.imageOpacity,
+    settingsOpaque: live.settingsOpaque,
     picker: pickerCapability(ctx)?.kind ?? null,
     files: [],
     ...extra,
@@ -434,6 +441,10 @@ export function apply(ctx, config) {
         live.rotateMinutes = clampMinutes(patch.rotateMinutes, live.rotateMinutes);
         applied.rotateMinutes = live.rotateMinutes;
       }
+      if (patch.settingsOpaque !== undefined) {
+        live.settingsOpaque = patch.settingsOpaque === true;
+        applied.settingsOpaque = live.settingsOpaque;
+      }
 
       let persisted = true;
       try {
@@ -447,6 +458,7 @@ export function apply(ctx, config) {
               surface: live.surface,
               imageOpacity: live.imageOpacity,
               rotateMinutes: live.rotateMinutes,
+              settingsOpaque: live.settingsOpaque,
             },
             null,
             2,

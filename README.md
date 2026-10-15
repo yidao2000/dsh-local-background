@@ -22,11 +22,11 @@ DSH **内置没有**背景图设置：`@deepseek-ai/dsh-client-ui-theme` 只提�
 | 客户端（浏览器） | `client.js` | 取清单 → 定时切换 `background-image` → 注入 CSS；**「插件」页里的设置界面** |
 
 ```
-GET  /dsh-local-background/list                      → { dir, rotateMinutes, dim, surface, imageOpacity, picker, files:[...] }
+GET  /dsh-local-background/list                      → { dir, rotateMinutes, dim, surface, imageOpacity, settingsOpaque, picker, files:[...] }
 GET  /dsh-local-background/img/<名>                  → 图片字节流（同源，不走 file://，不受跨域限制）
 GET  /dsh-local-background/pick                      → 弹系统文件夹对话框，返回 { supported, path }
 GET  /dsh-local-background/dirs?path=&child=         → 逐级列子目录（宿主拼路径，用平台分隔符）
-POST /dsh-local-background/config                    → 写配置：{ dir?, dim?, surface?, imageOpacity?, rotateMinutes? }
+POST /dsh-local-background/config                    → 写配置：{ dir?, dim?, surface?, imageOpacity?, rotateMinutes?, settingsOpaque? }
 GET  /dsh-local-background/report                    → 客户端诊断日志（追加 report.log）
 ```
 
@@ -86,6 +86,14 @@ C:\Users\Administrator\.dsh\local-plugins\dsh-local-background
 | **背景压暗** | 在图上盖一层黑，图太亮时压一压 | 0% = 不压暗 |
 | **面板不透明度** | 界面面板多透明；越小背景越明显、字越难读 | 0~100% |
 | **自动轮换** | 每隔几分钟换一张 | 0 = 不轮换，最大 1440 |
+| **弹窗用默认（不透明）背景** | 宿主「设置」等弹窗/对话框/菜单的背景：勾上就用宿主默认不透明底色（字更清楚） | 默认勾选 |
+
+> 壁纸是靠改 `body` 上的 `--dsw-alias-bg-*` 透出来的，而这些自定义属性会被**弹窗、对话框、菜单**
+> 这些浮层继承 —— 于是宿主自己的「设置」弹窗（背景是 `var(--dsw-alias-bg-layer-2)`）也跟着半透明，
+> 字就看不清了。勾选「弹窗用默认（不透明）背景」后，插件会给所有浮层
+> （`[role="dialog"]`、`[role="menu"]`）重新声明这些别名，值直接取 **static 色板**（不受 body 覆盖影响），
+> 弹窗就回到默认的不透明底色。本插件自己的配置页所在的那支浮层会被标记放过 ——
+> 那一页是调透明度的预览区，得看得见壁纸。
 
 **换图仍然是把文件丢进那个文件夹就行** —— 加减图片后点 `重新读取` 即可（或刷新页面），
 不用改插件、不用跑脚本、不用重新打包。
@@ -107,6 +115,7 @@ C:\Users\Administrator\.dsh\local-plugins\dsh-local-background
         dim: 0.45              # 背景压暗 0~1（图亮就加大）
         surface: 0.72          # 面板不透明度 0~1
         imageOpacity: 1        # 背景图不透明度 0~1
+        settingsOpaque: true   # 弹窗（含宿主「设置」）用默认（不透明）背景
 ```
 
 ⚠️ **优先级：`settings.json`（界面里改的）覆盖 `cordis.patch.yml`（默认值）。**

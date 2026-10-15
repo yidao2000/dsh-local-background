@@ -31,6 +31,9 @@
   var IMAGE_OPACITY = 1;
   // ROTATE_MINUTES = 每隔几分钟换一张；0 = 不轮换（只显示第一张）
   var ROTATE_MINUTES = 5;
+  // SETTINGS_OPAQUE = 浮层（宿主「设置」弹窗、对话框、菜单等）是否用宿主的默认（不透明）背景，
+  //                   否则字会浮在壁纸上、看不清；关掉则浮层也跟着一起半透明
+  var SETTINGS_OPAQUE = true;
   /* ========================= CONFIG-END ========================= */
 
   var STYLE_ID = 'dsh-local-background-style';
@@ -44,15 +47,18 @@
   var CONFIG_URL = BASE_URL + '/config';
   var PICK_URL = BASE_URL + '/pick';
   var DIRS_URL = BASE_URL + '/dirs';
-  var CLIENT_VERSION = 4;
+  var CLIENT_VERSION = 6;
   /** 设置页在「插件」页上的槽位 key：`<包名>#<cordis.patch.yml 里该行的 id>`。 */
   var ROW_KEY = 'dsh-local-background#dsh-local-background';
+  /** 打在「本插件自己的配置页所在浮层」上的标记：带它的浮层继续透壁纸，其余浮层用默认不透明底色。 */
+  var WALLPAPER_ATTR = 'data-dslb-wallpaper';
 
   var state = {
     dim: DIM,
     surface: SURFACE,
     imageOpacity: IMAGE_OPACITY,
     rotateMinutes: ROTATE_MINUTES,
+    settingsOpaque: SETTINGS_OPAQUE,
     dir: '',
     files: 0,
     fileList: [],
@@ -146,11 +152,83 @@
     return Math.min(1, Math.max(0, n));
   }
 
+  /** 本插件配置页所在的那支浮层（如果它确实渲染在浮层里的话）。
+   *  给它打 WALLPAPER_ATTR，overlayCss 就会放过它 —— 那一页是调透明度的预览区，得看得见壁纸。
+   *  宿主可能晚一步才把浮层插进 DOM、或复用节点重复挂载，所以用一个低频轮询兜住，
+   *  而不是只在挂载那一刻找一次。 */
+  var ownLayer = { el: null, marked: null, timer: 0 };
+
+  function markOwnLayer(node) {
+    var el = node;
+    while (el && el.nodeType === 1) {
+      var role = el.getAttribute ? el.getAttribute('role') : null;
+      if (role === 'dialog' || role === 'menu') {
+        if (ownLayer.marked !== el) {
+          if (ownLayer.marked && ownLayer.marked.removeAttribute) {
+            ownLayer.marked.removeAttribute(WALLPAPER_ATTR);
+          }
+          el.setAttribute(WALLPAPER_ATTR, '');
+          ownLayer.marked = el;
+        }
+        return;
+      }
+      el = el.parentElement;
+    }
+  }
+
+  function watchOwnLayer(node) {
+    ownLayer.el = node;
+    markOwnLayer(node);
+    if (ownLayer.timer) { clearInterval(ownLayer.timer); }
+    ownLayer.timer = setInterval(function () {
+      if (ownLayer.el && ownLayer.el.isConnected) { markOwnLayer(ownLayer.el); }
+    }, 400);
+  }
+
+  function unwatchOwnLayer() {
+    if (ownLayer.timer) { clearInterval(ownLayer.timer); }
+    ownLayer.timer = 0;
+    ownLayer.el = null;
+    if (ownLayer.marked && ownLayer.marked.removeAttribute) { ownLayer.marked.removeAttribute(WALLPAPER_ATTR); }
+    ownLayer.marked = null;
+  }
+
+  /** 单独一支 CSS：把「浮层」的背景色重新指回宿主的默认不透明色。
+   *
+   *  为什么要这一段：壁纸是靠改 body 上的 --dsw-alias-bg-* 透出来的，而自定义属性会被
+   *  弹窗/对话框/菜单这些浮层继承 —— 于是宿主自己的「设置」弹窗（背景是
+   *  var(--dsw-alias-bg-layer-2)）也跟着半透明，字就看不清了（用户反馈的原问题）。
+   *
+   *  做法：给所有浮层（[role=dialog]、[role=menu]）重新声明这些别名，值直接用 static 色板
+   *  （static token 不受我们在 body 上的覆盖影响），并且 !important 压过继承来的半透明值。
+   *  只有本插件自己的配置页那支浮层带 WALLPAPER_ATTR 标记，被 :not() 排除在外 —— 那一页
+   *  本来就是调透明度的预览区，得看得见壁纸。 */
+  function overlayCss() {
+    var light = [
+      '--dsw-alias-bg-base: var(--dsw-static-neutral-bluish-00) !important;',
+      '--dsw-alias-bg-layer-1: var(--dsw-static-neutral-bluish-00) !important;',
+      '--dsw-alias-bg-layer-2: var(--dsw-static-neutral-bluish-00) !important;',
+      '--dsw-specific-sidebar-fill: var(--dsw-static-neutral-bluish-50) !important;',
+    ].join(' ');
+    var dark = [
+      '--dsw-alias-bg-base: var(--dsw-static-neutral-bluish-950) !important;',
+      '--dsw-alias-bg-layer-1: var(--dsw-static-neutral-bluish-875) !important;',
+      '--dsw-alias-bg-layer-2: var(--dsw-static-neutral-bluish-850) !important;',
+      '--dsw-specific-sidebar-fill: var(--dsw-static-neutral-bluish-900) !important;',
+    ].join(' ');
+    var sel = '[role="dialog"]:not([' + WALLPAPER_ATTR + ']), [role="menu"]:not([' + WALLPAPER_ATTR + '])';
+    return [
+      sel + ' { ' + light + ' }',
+      '[data-ds-dark-theme] ' + sel + ' { ' + dark + ' }',
+      '[data-ds-dark-theme]' + sel + ' { ' + dark + ' }',
+    ].join('\n');
+  }
+
   function buildCss(imageValue) {
     var pct = Math.round(clamp01(state.surface, SURFACE) * 100) + '%';
     var veil = Math.round((1 - clamp01(state.imageOpacity, IMAGE_OPACITY)) * 100) + '%';
     var dim = clamp01(state.dim, DIM);
-    return [
+    var bg = [
       // 图层自下而上：图片 → 底色纱幕（按「背景图不透明度」加浓）→ 压暗遮罩。
       // 不透明度 = 1 时纱幕全透明，与旧版渲染完全一致。
       'html, body {',
@@ -180,6 +258,8 @@
       '  --dsw-specific-sidebar-fill: color-mix(in srgb, var(--dsw-static-neutral-bluish-900) ' + pct + ', transparent) !important;',
       '}',
     ].join('\n');
+    // 「弹窗用默认背景」关掉时就是插件原本的行为：浮层跟着一起半透明。
+    return (state.settingsOpaque === false ? '' : overlayCss() + '\n') + bg;
   }
 
   function unmount() {
@@ -282,6 +362,7 @@
         if (data && Number.isFinite(Number(data.surface))) { state.surface = Number(data.surface); }
         if (data && Number.isFinite(Number(data.imageOpacity))) { state.imageOpacity = Number(data.imageOpacity); }
         if (data && Number.isFinite(Number(data.rotateMinutes))) { state.rotateMinutes = Number(data.rotateMinutes); }
+        if (data && typeof data.settingsOpaque === 'boolean') { state.settingsOpaque = data.settingsOpaque; }
         state.dir = (data && data.dir) || '';
         state.serverError = (data && data.error) || '';
         state.fileList = (data && Array.isArray(data.files)) ? data.files : [];
@@ -328,6 +409,7 @@
         if (Number.isFinite(Number(data.surface))) { state.surface = Number(data.surface); }
         if (Number.isFinite(Number(data.imageOpacity))) { state.imageOpacity = Number(data.imageOpacity); }
         if (Number.isFinite(Number(data.rotateMinutes))) { state.rotateMinutes = Number(data.rotateMinutes); }
+        if (typeof data.settingsOpaque === 'boolean') { state.settingsOpaque = data.settingsOpaque; }
         if (typeof data.dir === 'string') { state.dir = data.dir; }
         report('config-ok', JSON.stringify(patch) + ' -> ' + JSON.stringify(data.applied || {}) + '; persisted=' + data.persisted);
         return data;
@@ -514,6 +596,7 @@
     return function SettingsPage(props) {
       var view = props && props.view;
       var React_ = React;
+      var rootRef = React_.useRef(null);
       var pair = React_.useState(null);
       var snapshot = pair[0];
       var setSnapshot = pair[1];
@@ -534,6 +617,7 @@
           surface: state.surface,
           imageOpacity: state.imageOpacity,
           rotateMinutes: state.rotateMinutes,
+          settingsOpaque: state.settingsOpaque,
           dir: state.dir,
           files: state.files,
           error: state.serverError,
@@ -547,6 +631,18 @@
         loadList();
         return off;
       }, [sync]);
+
+      // 本插件自己的配置页：给它所在的浮层打上 WALLPAPER_ATTR。
+      // 其它浮层（宿主「设置」弹窗、通用 Modal、菜单）会被 overlayCss 拉回默认不透明底色，
+      // 唯独这一层要继续透着壁纸 —— 不然调「面板不透明度」滑杆时看不见效果。
+      // 依赖里带上 hasSnapshot：首次渲染 snapshot 还是 null（那时只画「正在读取…」、根 div 还没挂上），
+      // 等清单回来重渲染出根 div 后要再看一眼，否则会永远错过这一页。
+      var hasSnapshot = !!snapshot;
+      React_.useEffect(function () {
+        if (view === 'summary' || !hasSnapshot) { return undefined; }
+        watchOwnLayer(rootRef.current);
+        return unwatchOwnLayer;
+      }, [view, hasSnapshot]);
 
       /** 改动统一入口：先就地生效（立刻看见），再落盘。
        *  返回写入的 Promise —— 换目录时要等它落定再 loadList，否则宿主还是旧目录。 */
@@ -731,6 +827,26 @@
           }),
           React_.createElement('span', { style: readoutStyle }, '分钟'))));
 
+      // —— 浮层（弹窗 / 对话框 / 菜单）的背景 ——
+      children.push(React_.createElement('div', { key: 'pagebg', style: sectionStyle },
+        React_.createElement('h4', { style: sectionTitleStyle }, '弹窗背景'),
+        React_.createElement('div', { style: rowStyle },
+          React_.createElement('input', {
+            type: 'checkbox', id: 'dslb-settings-opaque',
+            checked: snapshot.settingsOpaque !== false,
+            onChange: function (event) {
+              var v = event.target.checked === true;
+              change({ settingsOpaque: v }, function () { state.settingsOpaque = v; });
+            },
+          }),
+          React_.createElement('label', {
+            htmlFor: 'dslb-settings-opaque',
+            style: { fontSize: '13px', color: TOKENS.text, cursor: 'pointer' },
+          }, '弹窗用默认（不透明）背景'),
+          React_.createElement('p', {
+            style: { ...hintStyle, flex: '1 1 100%' },
+          }, '勾上：宿主「设置」等弹窗按默认底色显示，字更清楚。取消勾选：弹窗也跟着半透明。'))));
+
       // —— 状态 ——
       var statusLine = status
         || (saving ? '正在写入…' : '')
@@ -741,7 +857,7 @@
         style: { marginTop: '16px', fontSize: '12px', color: snapshot.error ? 'var(--dsw-alias-state-warning-primary, #d98600)' : TOKENS.sub },
       }, statusLine));
 
-      return React_.createElement('div', { style: { maxWidth: '640px' } }, children);
+      return React_.createElement('div', { ref: rootRef, style: { maxWidth: '640px' } }, children);
     };
   }
 
@@ -835,7 +951,7 @@
     write(DIAG_KEY, diagnose());
     report('diag', 'styleRules=' + (function () {
       try { var st = document.getElementById(STYLE_ID); return st && st.sheet ? st.sheet.cssRules.length : -1; } catch (e) { return 'blocked'; }
-    })() + '; bgImg=' + (function () {
+    })() + '; ownLayer=' + (ownLayer.marked ? 'marked' : 'none') + '; bgImg=' + (function () {
       try { return String(getComputedStyle(document.body).backgroundImage).slice(0, 50); } catch (e) { return 'err'; }
     })());
   }, 2500);
