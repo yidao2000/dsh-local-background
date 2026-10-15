@@ -18,7 +18,7 @@ DSH **内置没有**背景图设置：`@deepseek-ai/dsh-client-ui-theme` 只提�
 
 | 半侧 | 文件 | 职责 |
 | --- | --- | --- |
-| 宿主（Node/ESM） | `index.js` | 读图片文件夹；`webServer` 五条路由；**配置的读写与持久化** |
+| 宿主（Node/ESM） | `index.js` | 读图片文件夹；`webServer` 六条路由；**配置的读写与持久化** |
 | 客户端（浏览器） | `client.js` | 取清单 → 定时切换 `background-image` → 注入 CSS；**「插件」页里的设置界面** |
 
 ```
@@ -58,15 +58,27 @@ body { --dsw-alias-bg-base: transparent; }   /* 应用底色透明 */
 
 ## 安装
 
-桌面应用是**官方 Desktop**，走 GUI（**不要**用 `dsh plugin --profile desktop`）：
+### 命令行（推荐）
 
-> **插件 → 添加插件** → 填下面这个**绝对路径** → 启用 → **重启桌面应用**
-
-```
-C:\Users\Administrator\.dsh\local-plugins\dsh-local-background
+```sh
+dsh plugin --profile web add dsh-local-background
 ```
 
-（插件管理器接受绝对路径；相对路径会被 `parseInstallSpec` 拒绝。）
+- **`--profile web` 要带上**：本插件是 web 平台客户端插件（`dsh.client.platform = "web"`）。
+  桌面端用的是 `desktop` profile，所以**不要**写 `--profile desktop`。
+- 也可以填**绝对路径**装本地目录（适合改源码调试）：
+  ```sh
+  dsh plugin --profile web add D:\devinstall\IdeaProjects\dsh-local-background
+  ```
+
+### GUI（桌面应用）
+
+> **插件 → 添加插件** → 填**仓库地址或本地绝对路径** → 启用 → 重启桌面应用。
+
+- 装别人的包：`yidao2000/dsh-local-background`
+- 装自己改的源码：本仓库的绝对路径（见上）
+
+（插件管理器接受仓库地址与绝对路径；相对路径会被 `parseInstallSpec` 拒绝。）
 
 ---
 
@@ -74,7 +86,8 @@ C:\Users\Administrator\.dsh\local-plugins\dsh-local-background
 
 > **插件**（左侧栏）→ 找到 `dsh-local-background` → 行上的 **配置** 按钮。
 
-打开后是这些控件，**每一次改动都立刻生效**，同时写进本目录的 `settings.json` 持久保存：
+打开后是这些控件，**每一次改动都立刻生效**，同时写进用户态目录的 `settings.json` 持久保存
+（`~/.dsh/dsh-local-background/settings.json`）：
 
 | 控件 | 作用 | 范围 |
 | --- | --- | --- |
@@ -226,10 +239,9 @@ powershell -ExecutionPolicy Bypass -File .\read-probe.ps1
 | --- | --- |
 | `package.json` | 插件清单：`dsh.bundle.patch` + `dsh.client.platform=web` + 导出 `./client` |
 | `cordis.patch.yml` | 插入 loader 条目 + **配置项的默认值** |
-| `settings.json` | **界面里改过的值**（自动生成，优先级高于 `cordis.patch.yml`；删掉即回默认） |
-| `index.js` | 宿主半侧：`webServer` 五条路由（清单 / 图片 / 选文件夹 / 写配置 / 诊断上报） |
+| `settings.json` | **界面里改过的值**（自动生成；优先级高于 `cordis.patch.yml`，删掉即回默认；写在用户态目录 `~/.dsh/dsh-local-background/`，不在发布包里） |
+| `index.js` | 宿主半侧：`webServer` 六条路由（清单 / 图片 / 诊断上报 / 写配置 / 选文件夹 / 目录浏览） |
 | `client.js` | 客户端半侧：取清单、轮播、注入 CSS、**插件页里的设置界面** |
-| `settings.json` | **界面里改过的值**（自动生成，存在用户态目录，不在包里） |
 | `set-image.ps1` | 可选：把单张图嵌成 `client.js` 的兜底图 |
 | `read-probe.ps1` | 排查：从 leveldb 读 probe/diag |
 
