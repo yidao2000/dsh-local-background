@@ -2,6 +2,15 @@ name: Publish to npm
 
 # 信任发布（Trusted Publishing / OIDC）：不存 token、不用 2FA 验证码，
 # 由 GitHub 直接向 npm 证明「这个 workflow 跑在这个仓库里」。
+#
+# 参考 https://docs.npmjs.com/trusted-publishers
+#   - 需要 npm CLI >= 11.5.1 且 Node >= 22.14.0（Node 24 自带的 npm 11 满足）
+#   - OIDC 只支持 GitHub 托管的 runner（ubuntu-latest 是）
+#   - 用 OIDC 发布时 provenance 会自动生成，不需要再写 --provenance
+#   - 发布目标必须与 package.json 的 repository.url 完全一致
+#
+# 触发事件只能用 push / release / workflow_dispatch；
+# npm 会拒绝来自 issue_comment 与 pull_request_target 的 trusted publishing token。
 on:
   push:
     tags:
@@ -10,16 +19,31 @@ on:
 
 permissions:
   contents: read
-  id-token: write
+  id-token: write # OIDC 必需：允许 Actions 生成身份令牌
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false # 发布构建永不使用缓存
+
+      # 防止 tag 与 package.json 版本不一致导致发错版本
+      - name: Verify tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          pkg_version="$(node -p "require('./package.json').version")"
+          tag_version="${GITHUB_REF_NAME#v}"
+          echo "package.json=$pkg_version  tag=$tag_version"
+          if [ "$pkg_version" != "$tag_version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $pkg_version"
+            exit 1
+          fi
+
       - name: Publish
-        run: npm publish --provenance --access public
+        run: npm publish --access public

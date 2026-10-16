@@ -66,6 +66,10 @@ dsh plugin --profile web add dsh-local-background
 
 - **`--profile web` 要带上**：本插件是 web 平台客户端插件（`dsh.client.platform = "web"`）。
   桌面端用的是 `desktop` profile，所以**不要**写 `--profile desktop`。
+- 从 npm 装（上面的写法）**需要包已发布**。若 npm 上还取不到，用 GitHub 源装：
+  ```sh
+  dsh plugin --profile web add github:yidao2000/dsh-local-background
+  ```
 - 也可以填**绝对路径**装本地目录（适合改源码调试）：
   ```sh
   dsh plugin --profile web add D:\devinstall\IdeaProjects\dsh-local-background
