@@ -13,4 +13,6 @@ node_modules/
 .idea/
 *.iml
 .npmrc
+.npmrc.*
 npm-login.log
+*.log
